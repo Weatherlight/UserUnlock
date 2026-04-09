@@ -49,7 +49,7 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 # ==========================================
 # --- ユーザー設定エリア ---
 # ==========================================
-$script:DefaultTargetDC = "PVE-711.gin-bp.jp"
+$script:DefaultTargetDC = "dc01.example.com"
 $script:TargetColumnName = "SamAccountName"
 $script:LogDirectoryName = "logs"
 # ==========================================
