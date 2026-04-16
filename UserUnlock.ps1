@@ -6,35 +6,60 @@
     【概要】
     CSVファイルから対象ユーザーのリスト（SamAccountName等）を読み込み、
     Active Directory のアカウントロックを一括で解除するGUIツールです。
-    
+    実行に使用する資格情報は、スクリプト上部のユーザー設定エリアへの事前記載、
+    起動時のコマンドライン引数指定、または実行時の入力ダイアログの3通りから選択できます。
+
     【実行方式（2つのモード）】
     本ツールは環境に合わせて以下の2つのモードをタブで切り替えて使用できます。
-    
+
     1. RSATモード (Local Client)
        - 実行端末の「Active Directory モジュール (RSAT)」を使用して、ローカルからDCへ処理を要求します。
        - DC側のWinRM設定が不要で、よりセキュアな運用（専用の委任ユーザーによる実行など）に適しています。
-    
+
     2. WinRMモード (Remote Execute)
        - 実行端末から対象DCへ `Invoke-Command` でリモート接続し、DC上で直接処理を実行します。
        - 実行端末にRSATをインストールする必要がありません（DC側でWinRMが有効である必要があります）。
 
+    【資格情報の指定方法（優先順位順）】
+    1. コマンドライン引数:
+       起動時に -Username と -PlainPassword を渡すと、その値を使用します。
+       例: powershell -File UserUnlock.ps1 -Username "DOMAIN\admin" -PlainPassword "P@ssw0rd"
+    2. ユーザー設定エリア:
+       スクリプト上部の $script:DefaultUsername / $script:DefaultPlainPassword に値を記載すると、
+       コマンドライン引数が省略された場合の既定値として使用します。
+    3. 実行時ダイアログ:
+       上記のいずれも指定されていない場合、「▶ 実行」ボタン押下時に Get-Credential ダイアログを表示します。
+
     【使用手順】
-    1. 事前準備: 
+    1. 事前準備:
        本スクリプトと同じフォルダに `users.csv` を配置します。
        ※CSVには必ず `$script:TargetColumnName` で指定した列（デフォルトは SamAccountName）を含めてください。
-    2. ツールの起動:
+    2. 資格情報の設定（任意）:
+       スクリプト上部のユーザー設定エリアに $script:DefaultUsername と $script:DefaultPlainPassword を記載するか、
+       起動時にコマンドライン引数で指定します。省略した場合は手順5で入力ダイアログが表示されます。
+    3. ツールの起動:
        バッチファイル（.bat）から起動するか、PowerShellで直接実行します。自動的に管理者権限に昇格します。
-    3. モードの選択:
+    4. モードの選択:
        環境に合わせてタブ（RSATモード または WinRMモード）を選択します。
-    4. 実行:
+    5. 実行:
        対象DCのFQDN、CSVパスを確認し、「▶ 実行」ボタンをクリックします。
-       認証ダイアログが表示されるので、ロック解除権限を持つユーザーの資格情報を入力してください。
-    5. 結果の確認:
+       資格情報が未設定の場合は認証ダイアログが表示されるので、ロック解除権限を持つユーザーの資格情報を入力してください。
+    6. 結果の確認:
        画面下部のリアルタイムログ、および同階層の `logs` フォルダ内のログファイルに処理結果が出力されます。
 
 .NOTES
-    Last Updated: 2026/04/07
+    Last Updated: 2026/04/16
 #>
+
+# PSScriptAnalyzer の「平文パスワード」警告を抑制する属性。
+# 本スクリプトは意図的に平文パスワードの受け取りをサポートするため、警告ではなく仕様として扱う。
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', 'PlainPassword')]
+# コマンドライン引数の定義。
+# 省略時はユーザー設定エリアの既定値を参照し、そちらも未設定の場合は Get-Credential ダイアログを表示する。
+param(
+    [string]$Username = "",
+    [string]$PlainPassword = ""
+)
 
 # ==========================================
 # 管理者権限のチェックと自動昇格 (STAモード、非表示設定)
@@ -42,6 +67,8 @@
 $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     $argList = "-Sta -WindowStyle Hidden -ExecutionPolicy Bypass -NoProfile -File `"$($MyInvocation.MyCommand.Path)`""
+    if ($Username)      { $argList += " -Username `"$Username`"" }
+    if ($PlainPassword) { $argList += " -PlainPassword `"$PlainPassword`"" }
     Start-Process powershell -ArgumentList $argList -Verb RunAs
     exit
 }
@@ -49,10 +76,16 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 # ==========================================
 # --- ユーザー設定エリア ---
 # ==========================================
-$script:DefaultTargetDC = "dc01.example.com"
-$script:TargetColumnName = "SamAccountName"
-$script:LogDirectoryName = "logs"
+$script:DefaultTargetDC    = "dc01.example.com"
+$script:TargetColumnName   = "SamAccountName"
+$script:LogDirectoryName   = "logs"
+$script:DefaultUsername    = ""   # 例: "DOMAIN\admin"
+$script:DefaultPlainPassword = "" # 例: "P@ssw0rd" (未指定時はダイアログで入力)
 # ==========================================
+
+# スクリプトパラメータを優先し、未指定の場合はユーザー設定エリアの値を使用
+if (-not $Username)      { $Username      = $script:DefaultUsername }
+if (-not $PlainPassword) { $PlainPassword = $script:DefaultPlainPassword }
 
 Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName System.Windows.Forms
@@ -436,10 +469,16 @@ function Start-UnlockProcess {
 
     if ([System.Windows.MessageBox]::Show("[$Mode] $DC に対して $($users.Count) 件のロック解除処理を実行しますか？", "確認", 1) -ne "OK") { return }
     
-    $cred = Get-Credential -Message "ロック解除を実行するための資格情報を入力してください`r`n`r`nRSAT  ：アカウントロック解除を委任されたユーザー`r`nWinRM：Domain Admins権限ユーザー"
-    if (-not $cred) { 
-        Write-Log "資格情報の入力がキャンセルされました。処理を中止します。"
-        return 
+    if ($Username -and $PlainPassword) {
+        $securePass = ConvertTo-SecureString $PlainPassword -AsPlainText -Force
+        $cred = New-Object System.Management.Automation.PSCredential($Username, $securePass)
+        Write-Log "資格情報: パラメータで指定されたユーザー '$Username' を使用します。"
+    } else {
+        $cred = Get-Credential -Message "ロック解除を実行するための資格情報を入力してください`r`n`r`nRSAT  ：アカウントロック解除を委任されたユーザー`r`nWinRM：Domain Admins権限ユーザー"
+        if (-not $cred) {
+            Write-Log "資格情報の入力がキャンセルされました。処理を中止します。"
+            return
+        }
     }
 
     Write-Log "--------------------------------------------------"
