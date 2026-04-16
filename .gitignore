@@ -1,0 +1,11 @@
+
+**/temp/
+
+# 個人情報や検証データが入ったCSV
+*.png
+*.csv
+!*_template.csv
+
+# 一時ファイル
+*.tmp
+*.zip
